@@ -8,4 +8,4 @@ for i in {2..12}
 		mv /nfs/*stats.json /nfs/hpc-unime-exam/resultsdata/
             done
     done
-/nfs/hpc-unime-exam/pulizia.sh
+/nfs/hpc-unime-exam/clean.sh
