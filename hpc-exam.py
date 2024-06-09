@@ -6,6 +6,7 @@ import json
 from datatypes import ResponseMessage
 import threading
 import pyopencl as cl
+import time  # Import time for serial execution timing
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -26,19 +27,22 @@ def receive(comm,pn,stats,results,cols,resultsrows):
             row = int(data["row"])
             for j in range(cols):
                 results[row*cols+j]=rowdata[j]
-            #print("l:"+str(len(stats))+" r:"+str(resultsrows))
         except:
-#            print(f"errore in {pn}")
             break
-            #print("l:"+str(len(stats))+" r:"+str(resultsrows))
-            #print(stats)
 
+def serial_matrix_vector_multiplication(matrix, vector):
+    # Perform the matrix-vector multiplication serially
+    result = np.zeros(len(matrix), dtype=np.int32)
+    for i in range(len(matrix)):
+        for j in range(len(vector)):
+            result[i] += matrix[i][j] * vector[j]
+    return result
 
 if rank == 0:
 
     ut.log("Starting main process")
     port = MPI.Open_port(info)
-    ut.log("opened port: '%s'", port)    
+    ut.log("opened port: '%s'", port)
     MPI.Publish_name(service, info, port)
     ut.log("published service: '%s'", service)
 
@@ -48,10 +52,6 @@ if rank == 0:
     global results
     global stats
     
-    #n = int(input("A rows:"))
-    #m = int(input("A columns/B rows:"))
-    #p = int(input("B columns:"))
-    #max = int(input("Maximum:"))
     n,m,p,max=100,100,100,10
 
     results = []
@@ -62,15 +62,18 @@ if rank == 0:
     b = ut.initRandomMatrix('B',m,p,max,debug)
     c = ut.initZeroMatrix('C',n,p,debug)
 
+    # Measure serial execution time
+    t0_serial = time.time()
+    for row in a:
+        serial_matrix_vector_multiplication(b, row)
+    t_serial = time.time() - t0_serial
 
     for i in range(size-1):
         thread = threading.Thread(target=receive, args=(comm,i+1,stats,c,p,n,))
         thread.name="rank-"+str(i+1)+"-receiver"
         threads.append(thread)
         thread.start()
-        #print("avviato "+thread.name)
     
-
     t0 = ut.current_milli_time()
     outcsv = str(t0)+","+str(size)+","+str(n)+","+str(m)+","+str(p)
     filenameb = path+str(t0)+'-b.json'
@@ -85,9 +88,8 @@ if rank == 0:
             "b":None
         }
 
-
     for i in range(n):
-        destproc = 1 + i % (size-1) # the value 0 is used for the master process
+        destproc = 1 + i % (size-1)
         filename = path+str(t0)+'-a-r'+str(i).zfill(5)+'-p'+str(destproc).zfill(2)+'.json'
         r = a.reshape(n, m)[i]
         ut.writeMatrixToFile(r,filename)
@@ -96,50 +98,45 @@ if rank == 0:
     
     t0 = ut.current_milli_time()
     comm.bcast(json.dumps(messages),0)
-    #print(json.dumps(messages))
     for thread in threads:
         thread.join()
-    out['t']=ut.current_milli_time()-t0
-    out['stats']=stats
-    out['results']=results
-    ut.writeMatrixToFile(c,filenamec)
-    ut.writeStatsToFile(out,filenames)
-    outcsv=outcsv+","+str(out['t'])+"\n"
+    out['t'] = ut.current_milli_time() - t0
+    out['stats'] = stats
+    out['results'] = results
+    ut.writeMatrixToFile(c, filenamec)
+    ut.writeStatsToFile(out, filenames)
+    
+    # Calculate speed-up and efficiency
+    t_parallel = out['t']
+    P = size - 1  # Number of worker nodes
+    speed_up = t_serial / (t_parallel / 1000)  # Convert milliseconds to seconds
+    efficiency = speed_up / P
+    
+    outcsv = f"{outcsv},{t_parallel},{t_serial},{speed_up},{efficiency}\n"
     with open(path+"stats.csv", "a") as myfile:
         myfile.write(outcsv)
         myfile.close()
-        
-
-else: # if rank is different then 0 this is a calculator node
+else:
     port = None
-    #ut.log("looking-up service '%s'", service)
     while port is None:
         try:
             port = MPI.Lookup_name(service)
         except:
             pass
-    #ut.log("service located  at port '%s'", port)
-    #ut.log('waiting for data ')
     os.environ['PYOPENCL_COMPILER_OUTPUT'] = '1'
-    out = ResponseMessage(result=None,type=None,time=0,row=None)
+    out = ResponseMessage(result=None, type=None, time=0, row=None)
     message = json.loads(comm.bcast(None,0))
     b = ut.readMatrixFromFile(message[str(rank)]['b'])
     for patha in message[str(rank)]['a']:
-        #print(f"rank:{rank} path:{patha}")
         a = ut.readMatrixFromFile(patha)
 
-        pathtok=patha.split("-")
+        pathtok = patha.split("-")
         row = pathtok[2][1:]
         filename = pathtok[0]+"-c-r"+str(row)+'-p'+str(rank).zfill(2)+'.json'
         out.setRow(row)
         out.setResult(filename)
         out.setRank(rank)
-    
 
-        #the first matrix is always a row vector of size m columns
-        #the second matrix have m rows, so the columns are calulate dividing the readed array lenght by the rows
-        #the results is a row vector with the same number of columns of b matrix
-        
         n = 1
         m = int(len(a))
         p = int(len(b)/m)
@@ -148,7 +145,7 @@ else: # if rank is different then 0 this is a calculator node
 
         platforms = cl.get_platforms()
         dev = platforms[0].get_devices(device_type=cl.device_type.GPU)
-        if(len(dev)==0):
+        if len(dev) == 0:
             dev = platforms[0].get_devices(device_type=cl.device_type.CPU)
             if debug:
                 ut.log("GPU is absent, using CPU")
@@ -171,18 +168,14 @@ else: # if rank is different then 0 this is a calculator node
                 const int rows,
                 const int cols) {
             int row = get_global_id(0);
-            //printf("cols:%d rows:%d ",cols,rows);
-            //printf("\\n");
             if (row < rows) {
                 int sum = 0;
-                for (int col = 0; col < cols; col++) { // related to vector column
-                    //printf("v[%d]:%d m[%d]:%d m*v:%d\\n",col,vector[col],col * rows + row,matrix[col * rows + row],matrix[col * rows + row] * vector[col]);
+                for (int col = 0; col < cols; col++) {
                     sum += matrix[col * rows + row] * vector[col];
-                    }
-                result[row] = sum;
                 }
-            //printf("\\n");
+                result[row] = sum;
             }
+        }
         """).build()
         kernel = prg.multiply
         kernel.set_args(matrix_buf, vector_buf, result_buf, np.int32(p), np.int32(m))
@@ -190,10 +183,11 @@ else: # if rank is different then 0 this is a calculator node
         cl.enqueue_nd_range_kernel(queue, kernel, (m,), None)
         cl.enqueue_copy(queue, c, result_buf)
         queue.finish()
-        out.setTime(ut.current_milli_time()-t0)
-        ut.writeMatrixToFile(c,filename)
+        out.setTime(ut.current_milli_time() - t0)
+        ut.writeMatrixToFile(c, filename)
 
         comm.send(out.toJSON(), dest=0)
-    comm.send("stop",dest=0)
+    comm.send("stop", dest=0)
 
 MPI.Finalize()
+
