@@ -6,7 +6,6 @@ import json
 from datatypes import ResponseMessage
 import threading
 import pyopencl as cl
-import time  # Import time for serial execution timing
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -29,14 +28,6 @@ def receive(comm,pn,stats,results,cols,resultsrows):
                 results[row*cols+j]=rowdata[j]
         except:
             break
-
-def serial_matrix_vector_multiplication(matrix, vector):
-    # Perform the matrix-vector multiplication serially
-    result = np.zeros(len(matrix), dtype=np.int32)
-    for i in range(len(matrix)):
-        for j in range(len(vector)):
-            result[i] += matrix[i][j] * vector[j]
-    return result
 
 if rank == 0:
 
@@ -61,12 +52,6 @@ if rank == 0:
     a = ut.initRandomMatrix('A',n,m,max,debug)
     b = ut.initRandomMatrix('B',m,p,max,debug)
     c = ut.initZeroMatrix('C',n,p,debug)
-
-    # Measure serial execution time
-    t0_serial = time.time()
-    for row in a:
-        serial_matrix_vector_multiplication(b, row)
-    t_serial = time.time() - t0_serial
 
     for i in range(size-1):
         thread = threading.Thread(target=receive, args=(comm,i+1,stats,c,p,n,))
@@ -106,14 +91,7 @@ if rank == 0:
     ut.writeMatrixToFile(c, filenamec)
     ut.writeStatsToFile(out, filenames)
     
-    # Calculate speed-up and efficiency
-    t_parallel = out['t']
-    P = size - 1  # Number of worker nodes
-    speed_up = t_serial / (t_parallel / 1000)  # Convert milliseconds to seconds
-    efficiency = speed_up / P
-    
-    outcsv = f"{outcsv},{t_parallel},{t_serial},{speed_up},{efficiency}\n"
-    with open(path+"stats.csv", "a") as myfile:
+    with open(path+"stats-opencl.csv", "a") as myfile:
         myfile.write(outcsv)
         myfile.close()
 else:
