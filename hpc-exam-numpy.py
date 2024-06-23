@@ -31,12 +31,7 @@ def receive(comm,pn,stats,results,cols,resultsrows):
 def prod (vect,matr):
     cols = int(len(vect))
     rows = int(len(matr)/cols)
-    res = np.zeros(rows, dtype=np.int32)
-    for row in range (rows):
-        r = 0
-        for col in range (cols):
-            r = r + vect[col] * matr [col * rows + row]
-        res[row] = r
+    res = np.dot(vect,matr.reshape((cols,rows)))
     return res
 
 if rank == 0:
@@ -53,7 +48,7 @@ if rank == 0:
     global results
     global stats
     
-    n,m,p,max=500,500,500,10
+    n,m,p,max=250,250,250,10
 
     results = []
     stats = []
@@ -102,7 +97,7 @@ if rank == 0:
     ut.writeMatrixToFile(c, filenamec)
     ut.writeStatsToFile(out, filenames)
     
-    with open(path+"stats-fullpython.csv", "a") as myfile:
+    with open(path+"stats-numpy.csv", "a") as myfile:
         myfile.write(outcsv)
         myfile.close()
 else:
