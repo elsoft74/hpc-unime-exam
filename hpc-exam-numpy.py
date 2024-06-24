@@ -48,7 +48,7 @@ if rank == 0:
     global results
     global stats
     
-    n,m,p,max=250,250,250,10
+    n,m,p,max=500,500,500,10
 
     results = []
     stats = []
