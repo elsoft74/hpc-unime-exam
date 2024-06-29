@@ -1,7 +1,7 @@
 
-for i in {2..12}
+for i in {2..2}
     do
-        for j in {1..4}
+        for j in {1..10}
             do
 		echo "test $j"
 		#mpiexec -n $i -tag-output -hostfile /nfs/hpc-unime-exam/hosts -display-map python /nfs/hpc-unime-exam/hpc-exam-opencl.py
